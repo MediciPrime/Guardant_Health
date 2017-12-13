@@ -76,6 +76,59 @@ rule bwa_picard_md:
         'picard MarkDuplicates I={input.bam_sorted} O={output.bam_dedup} '
         'CREATE_INDEX=true VALIDATION_STRINGENCY=SILENT M={output.output_met}'
 
+rule gatk_baseREcalab:
+    input:
+        bam_dedup = 'data/bam_files/{reference}/{sample}/{sample}_rg_dedupped.bam',
+        ref = 'data/reference/{reference}.fasta',
+        gold_snps = 'data/reference/gold_snps.vcf',
+        gold_indels = 'data/reference/gold_indels.vcf'
+    output:
+        covar_table = 'data/base_recalab/recal_data.table'
+    shell:
+        'java -jar GenomeAnalysisTK.jar -T BaseRecalibrator '
+        '-R {input.ref} -I {input.bam_dedup} -L 20 '
+        '-knownSites {input.gold_snps} -knownSites {input.gold_indels} '
+        '-o {output.covar_data} '
+
+rule gatk_secondREcalab:
+    input:
+        bam_dedup = 'data/bam_files/{reference}/{sample}/{sample}_rg_dedupped.bam',
+        ref = 'data/reference/{reference}.fasta',
+        gold_snps = 'data/reference/gold_snps.vcf',
+        gold_indels = 'data/reference/gold_indels.vcf',
+        covar_table = 'data/base_recalab/recal_data.table',
+    output:
+        covar_recal = 'data/base_recalab/post_recal_data.table'
+    shell:
+        'java -jar GenomeAnalysisTK.jar -T BaseRecalibrator '
+        '-R {input.ref} -I {input.bam_dedup} -L 20 '
+        '-knownSites {input.gold_snps} -knownSites {input.gold_indels} '
+        '-BQSR {input.covar_table} -o {output.covar_recal}'
+
+rule gatk_plots:
+    input:
+        ref = 'data/reference/{reference}.fasta',
+        covar_table = 'data/base_recalab/recal_data.table',
+        covar_recal = 'data/base_recalab/post_recal_data.table',
+    output:
+        plots = 'data/base_recalab/recalibration_plots.pdf'
+    shell:
+        'java -jar GenomeAnalysisTK.jar -T AnalyzeCovariates '
+        '-R {input.ref} -L 20 -before {input.covar_table} '
+        '-after {input.covar_recal} -plots {output.plots}'
+
+rule gatk_applyREcalab:
+    input:
+        ref = 'data/reference/{reference}.fasta',
+        bam_dedup = 'data/bam_files/{reference}/{sample}/{sample}_rg_dedupped.bam',
+        covar_table = 'data/base_recalab/recal_data.table'
+    output:
+        bam_recalb = 'data/bam_files/{reference}/{samp[le}/{sample}_recalb.bam'
+    shell:
+        'java -jar GenomeAnalysisTK.jar -T PrintReads -R {input.ref} '
+        '-I {input_bam_dedup} -L 20 -BQSR {input.covar_table} '
+        '-o {output.bam_recalb}'
+        
 rule fasta_index:
     input:
         ref = 'data/reference/{reference}/{reference}.fasta'
@@ -92,15 +145,15 @@ rule fasta_dictionary:
     shell:
         'picard CreateSequenceDictionary R={input.ref}'      
         
-rule gatk_haplotype:
+rule gatk_mutect2:
     input:
         ref = 'data/reference/{reference}/{reference}.fasta',
-        bam_split = 'data/bam_files/{reference}/{sample}/{sample}_rg_dedupped.bam',
-        ref_index = 'data/reference/{reference}/{reference}.fasta.fai',
-        ref_dict = 'data/reference/{reference}/{reference}.dict'
+        tumor_bam = 'data/bam_files/{reference}/{sample}/{sample}_recalb.bam',
+        normal_bam = 'data/bam_files/{reference}/{sample}/{sample}_recalb.bam'
     output:
-        'data/variants/{reference}/{sample}/{sample}.g.vcf'
+        variants = 'data/variants/{reference}/{sample}/{sample}.vcf'
     shell:
-        'java -jar GenomeAnalysisTK.jar -T HaplotypeCaller -R {input.ref} '
-        '-I {input.bam_split} --genotyping_mode DISCOVERY -stand_call_conf 30 '
-        '-stand_emit_conf 10 -o {output}'
+        'java -jar GenomeAnalysisTK.jar -T MuTect2 -R {input.ref} '
+        '-I:tumor {input.tumor_bam} -I:normal {input.normal_bam} '
+        '-o {output.variants}'
+
